@@ -1,0 +1,74 @@
+name: PineconeMC independent build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    env:
+      ARTIFACT_NAME: Windows-MSVC-Qt6
+      BUILD_PLATFORM: official
+      BUILD_TYPE: Release
+      CMAKE_PRESET: windows_msvc
+
+    steps:
+      - name: Checkout exact release
+        uses: actions/checkout@v6
+        with:
+          repository: ElyPrismLauncher/Launcher
+          ref: ac99ad44ef98dd73dd9626c7b7b2b668dd8cbd5c
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: false
+
+      - name: Record source revision
+        shell: bash
+        run: |
+          mkdir -p audit
+          git rev-parse HEAD > audit/source.txt
+          git describe --tags --exact-match >> audit/source.txt
+          git submodule status --recursive >> audit/source.txt
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-dependencies
+        with:
+          build-type: Release
+          artifact-name: Windows-MSVC
+          vcvars-arch: amd64
+          qt-version: 6.10.2
+
+      - name: Configure
+        shell: bash
+        run: cmake --preset windows_msvc
+
+      - name: Build
+        shell: bash
+        run: cmake --build --preset windows_msvc --config Release
+
+      - name: Package portable build
+        shell: pwsh
+        run: |
+          cmake --install build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install build --config Release --component portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem install -Recurse -File |
+            Get-FileHash -Algorithm SHA256 |
+            Export-Csv audit/sha256.csv -NoTypeInformation
+          cmake --version | Out-File audit/tools.txt
+          java -version 2>&1 | Out-File audit/tools.txt -Append
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: PineconeMC-independent-11.1.2
+          path: |
+            install/
+            audit/
+          if-no-files-found: error
